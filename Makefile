@@ -1,5 +1,19 @@
-PROG:=alisp
-CC:=gcc
+PROG := alisp
+CC   := gcc
+SRC  := mpc.c main.c
 
-all:
-	$(CC) mpc.c main.c -o $(PROG) -g -Wall -Wextra -std=c99 -ledit
+CFLAGS_DEBUG   := -g -O0 -Wall -Wextra -std=c99 -DDEBUG
+CFLAGS_RELEASE := -O3 -DNDEBUG -Wall -Wextra -std=c99
+
+LDFLAGS := -ledit
+
+all: debug
+
+debug:
+	$(CC) $(SRC) -o $(PROG) $(CFLAGS_DEBUG) $(LDFLAGS)
+
+release:
+	$(CC) $(SRC) -o $(PROG) $(CFLAGS_RELEASE) $(LDFLAGS)
+
+clean:
+	rm -f $(PROG)

@@ -1,16 +1,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include <editline/readline.h>
 
 #include "mpc.h"
 #include "types.h"
 
+#ifdef DEBUG
+#define DBG_LOG(FMT, ...) \
+    do{fprintf(stderr, "[%s:%s:%d]: " FMT "\n", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__);}while(0)
+#else
+#define DBG_LOG(FMT, ...) do{}while(0)
+#endif
+
 enum { LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPR };
 enum { LERR_DIV_ZERO, LERR_BAD_OP, LERR_BAD_NUM };
 
-typedef struct {
+typedef struct lval {
     i32 type;
     i64 num;
 
@@ -21,6 +29,11 @@ typedef struct {
     struct lval **cell;
 } lval;
 
+void fatal(const char* message) {
+    fprintf(stderr, "fatal: %s\n", message);
+    exit(1);
+}
+
 lval* lval_num(i64 num) {
     lval *out = malloc(sizeof(lval));
     out->type = LVAL_NUM;
@@ -29,6 +42,7 @@ lval* lval_num(i64 num) {
 }
 
 lval* lval_err(char *err) {
+    DBG_LOG("an error was created -> lval_err(\"%s\")\n", err);
     lval *out = malloc(sizeof(lval));
     out->type = LVAL_ERR;
     out->err = (char *)malloc(strlen(err) + 1);
@@ -52,23 +66,98 @@ lval* lval_sexpr(void) {
   return v;
 }
 
-lval* eval_op(lval *x, char* op, lval *y) {
-    if (x->type == LVAL_ERR) { return x; }
-    if (y->type == LVAL_ERR) { return y; }
+void lval_del(lval *v) {
+    switch (v->type) {
+        case LVAL_NUM: break;
 
-    i64 xx = x->num;
-    i64 yy = y->num;
+        case LVAL_ERR: free(v->err); break;
+        case LVAL_SYM: free(v->sym); break;
 
-    if (strcmp(op, "+") == 0) { return lval_num(xx + yy); }
-    if (strcmp(op, "-") == 0) { return lval_num(xx - yy); }
-    if (strcmp(op, "*") == 0) { return lval_num(xx * yy); }
-    if (strcmp(op, "/") == 0) {
-        if (yy == 0) {
-            return lval_err("division by zero");
-        }
-        return lval_num(xx / yy);
+        case LVAL_SEXPR: {
+                             for (i32 i=0; i< v->count; i++) {
+                                 lval_del((lval *)v->cell[i]);
+                             }
+                             free(v->cell);
+                             break;
+                         }
     }
-    return lval_err("bad operator");
+}
+
+lval* lval_pop(lval *v, i32 i) {
+    lval *x = (lval *)v->cell[i];
+    memmove(&v->cell[i], &v->cell[i + 1],
+            sizeof(lval*) * (v->count - i - 1));
+    v->count--;
+    v->cell = realloc(v->cell, sizeof(lval*) * v->count);
+    return x;
+}
+
+lval* lval_take(lval* v, i32 i) {
+    lval* x = lval_pop(v, i);
+    lval_del(v);
+    return x;
+}
+
+lval* builtin_op(lval *first, char* op) {
+    for (int i = 0; i < first->count; i++) {
+        if (first->cell[i]->type != LVAL_NUM) {
+            lval_del(first);
+            return lval_err("Cannot operate on non-number!");
+        }
+    }
+
+    lval* x = lval_pop(first, 0);
+    if ((strcmp(op, "-") == 0) && first->count == 0) {
+        x->num = -x->num;
+    }
+
+    while (first->count > 0) {
+        lval* y = lval_pop(first, 0);
+
+        if (strcmp(op, "+") == 0) { x->num += y->num; }
+        if (strcmp(op, "-") == 0) { x->num -= y->num; }
+        if (strcmp(op, "*") == 0) { x->num *= y->num; }
+        if (strcmp(op, "/") == 0) {
+            if (y == 0) {
+                lval_del(x); lval_del(y);
+                lval_err("division by zero"); break;
+            }
+            x->num /= y->num;
+        }
+
+        lval_del(y);
+    }
+    lval_del(first);
+
+    return x;
+}
+
+lval* lval_eval(lval* v);
+
+lval* lval_eval_sexpr(lval* v) {
+    for (i32 i = 0; i < v->count; i++)
+        v->cell[i] = lval_eval(v->cell[i]);
+
+    for (int i = 0; i < v->count; i++)
+        if (v->cell[i]->type == LVAL_ERR) { return lval_take(v, i); }
+
+    if (v->count == 0) { return 0; }
+    if (v->count == 1) { return lval_take(v, 0); }
+
+    lval *f = lval_pop(v, 0);
+    if (f->type != LVAL_SYM) {
+        lval_del(f); lval_del(v);
+        return lval_err("S-expression does not start with a symbol");
+    }
+
+    lval* result = builtin_op(v, f->sym);
+    lval_del(f);
+    return result;
+}
+
+lval* lval_eval(lval* v) {
+    if (v->type == LVAL_SEXPR) { return lval_eval_sexpr(v); }
+    return v;
 }
 
 void lval_print(lval *v) {
@@ -91,23 +180,6 @@ void lval_print(lval *v) {
 }
 
 void lval_println(lval *v) { lval_print(v); putchar('\n'); }
-
-void lval_del(lval *v) {
-    switch (v->type) {
-        case LVAL_NUM: break;
-
-        case LVAL_ERR: free(v->err); break;
-        case LVAL_SYM: free(v->sym); break;
-
-        case LVAL_SEXPR: {
-                             for (i32 i=0; i< v->count; i++) {
-                                 lval_del((lval *)v->cell[i]);
-                             }
-                             free(v->cell);
-                             break;
-                         }
-    }
-}
 
 lval *lval_read_num(mpc_ast_t *t) {
     errno = 0;
@@ -132,7 +204,6 @@ lval* lval_read(mpc_ast_t *node) {
     lval *x = NULL;
     if (strcmp(node->tag, ">") == 0) { x = lval_sexpr(); };
     if (strstr(node->tag, "sexpr"))  { x = lval_sexpr(); };
-    printf("%s\n", node->contents);
 
     for (i32 i=0; i < node->children_num; i++) {
         if (strcmp(node->children[i]->contents, "(") == 0)      continue;
@@ -144,31 +215,44 @@ lval* lval_read(mpc_ast_t *node) {
     return x;
 }
 
-i32 num_nodes(mpc_ast_t *node) {
-    printf("node -> %s\n", node->tag);
-    if (node->children_num == 0) { return 1; };
-    if (node->children_num >= 1) {
-        i32 total = 1;
-        for (i32 i = 0; i < node->children_num; i++) {
-            total = total + num_nodes(node->children[i]);
-        }
-        return total;
-    };
-    return 0;
+static
+i32 __read_file_size(const char *filepath) {
+    struct stat stat_buf;
+    int rc = stat(filepath, &stat_buf);
+    return rc == 0 ? stat_buf.st_size : -1;
+}
+
+u32 io_read_file(const char* filepath, u8 **buf_ptr) {
+    FILE *file = fopen(filepath, "rb");
+
+    i32 filesize = __read_file_size(filepath);
+    if (filesize == -1) {
+        *buf_ptr = NULL;
+        return 0;
+    }
+
+    u8* buffer = (u8*)malloc(filesize + 1);
+    while (!feof(file)) {
+        fread(buffer, 1, filesize, file);
+    }
+    fclose(file);
+    buffer[filesize] = '\0';
+    *buf_ptr = buffer;
+    return filesize;
 }
 
 i32 main(i32 argc, char** argv) {
-    // if (argc > 1) {
-    //     if (!strcmp(argv[0], "--help")) {
-    //         puts("Usage: alisp <source-file>");
-    //         return 0;
-    //     }
-    //     u8 buf[512];
-    //     const char *filepath = argv[1];
-    //     u64 size = io_read(filepath, (u8 **)&buf);
-    //     printf("(%s) file size: %llu\n", filepath, size);
-    //     return 0;
-    // }
+    if (argc > 1) {
+        if (!strcmp(argv[0], "--help")) {
+            puts("Usage: alisp <source-file>");
+            return 0;
+        }
+
+        u8 source[512];
+        const char *filepath = argv[1];
+        u64 size = io_read_file(filepath, (u8 **)&source);
+        return 0;
+    }
 
     mpc_parser_t *Number   = mpc_new("number");
     mpc_parser_t *Symbol   = mpc_new("symbol");
@@ -177,11 +261,11 @@ i32 main(i32 argc, char** argv) {
     mpc_parser_t *Alisp    = mpc_new("alisp");
 
     mpca_lang(MPCA_LANG_DEFAULT,
-            " number   : /-?[0-9]+/ ;                             "
-            " symbol : '+' | '-' | '*' | '/' ;                    "
-            " sexpr    : '(' <expr>* ')' ;                        "
-            " expr     : <number> | <symbol> | <sexpr> ;          "
-            " alisp    : /^/ <expr>* /$/ ;                        ",
+            " number : /-?[0-9]+/ ;                             "
+            " symbol : '+' | '-' | '*' | '/' ;                  "
+            " sexpr  : '(' <expr>* ')' ;                        "
+            " expr   : <number> | <symbol> | <sexpr> ;          "
+            " alisp  : /^/ <expr>* /$/ ;                        ",
             Number, Symbol, Sexpr, Expr, Alisp);
 
     puts("Alisp Version 0.0.1");
@@ -192,7 +276,7 @@ i32 main(i32 argc, char** argv) {
 
         mpc_result_t r;
         if (mpc_parse("<stdin>", input, Alisp, &r)) {
-            lval *x = lval_read(r.output);
+            lval *x = lval_eval(lval_read(r.output));
             lval_println(x);
             lval_del(x);
             mpc_ast_delete(r.output);
@@ -207,3 +291,4 @@ i32 main(i32 argc, char** argv) {
 
     return 0;
 }
+
