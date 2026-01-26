@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <editline/readline.h>
@@ -6,86 +7,138 @@
 #include "mpc.h"
 #include "types.h"
 
-enum { LVAL_NUM, LVAL_ERR };
+enum { LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPR };
 enum { LERR_DIV_ZERO, LERR_BAD_OP, LERR_BAD_NUM };
 
 typedef struct {
     i32 type;
     i64 num;
-    i32 err;
+
+    char *err;
+    char *sym;
+
+    i32 count;
+    struct lval **cell;
 } lval;
 
-lval lval_num(i64 num) {
-    lval out;
-    out.type = LVAL_NUM;
-    out.num = num;
+lval* lval_num(i64 num) {
+    lval *out = malloc(sizeof(lval));
+    out->type = LVAL_NUM;
+    out->num = num;
     return out;
 }
 
-// err: LERR_*
-lval lval_err(i32 err) {
-    lval out;
-    out.type = LVAL_ERR;
-    out.err = err;
+lval* lval_err(char *err) {
+    lval *out = malloc(sizeof(lval));
+    out->type = LVAL_ERR;
+    out->err = (char *)malloc(strlen(err) + 1);
+    strcpy(out->err, err);
     return out;
 }
 
-lval eval_op(lval x, char* op, lval y) {
-    if (x.type == LVAL_ERR) { return x; }
-    if (y.type == LVAL_ERR) { return y; }
+lval* lval_sym(char *sym) {
+    lval *out = malloc(sizeof(lval));
+    out->type = LVAL_SYM;
+    out->sym = (char *)malloc(strlen(sym) + 1);
+    strcpy(out->sym, sym);
+    return out;
+}
 
-    i64 xx = x.num;
-    i64 yy = y.num;
+lval* lval_sexpr(void) {
+  lval* v = malloc(sizeof(lval));
+  v->type = LVAL_SEXPR;
+  v->count = 0;
+  v->cell = NULL;
+  return v;
+}
+
+lval* eval_op(lval *x, char* op, lval *y) {
+    if (x->type == LVAL_ERR) { return x; }
+    if (y->type == LVAL_ERR) { return y; }
+
+    i64 xx = x->num;
+    i64 yy = y->num;
 
     if (strcmp(op, "+") == 0) { return lval_num(xx + yy); }
     if (strcmp(op, "-") == 0) { return lval_num(xx - yy); }
     if (strcmp(op, "*") == 0) { return lval_num(xx * yy); }
     if (strcmp(op, "/") == 0) {
         if (yy == 0) {
-            return lval_err(LERR_DIV_ZERO);
+            return lval_err("division by zero");
         }
         return lval_num(xx / yy);
     }
-    return lval_err(LERR_BAD_OP);
+    return lval_err("bad operator");
 }
 
-void lval_print(lval v) {
-    switch (v.type) {
-        case LVAL_NUM: printf("%lli", v.num); break;
-        case LVAL_ERR:
-                       if (v.err == LERR_DIV_ZERO) {
-                           printf("error: division by zero");
-                       }
-
-                       if (v.err == LERR_BAD_OP)   {
-                           printf("error: invalid operator");
-                       }
-
-                       if (v.err == LERR_BAD_NUM)  {
-                           printf("error: invalid number");
-                       }
-                       break;
-
+void lval_print(lval *v) {
+    switch (v->type) {
+        case LVAL_NUM: printf("%lli", v->num); break;
+        case LVAL_ERR: printf("error: %s", v->err); break;
+        case LVAL_SYM: printf("%s",  v->sym); break;
+        case LVAL_SEXPR: {
+                             putchar('(');
+                             for (i32 i = 0; i < v->count; i++) {
+                                 lval_print((lval *)v->cell[i]);
+                                 if (i != (v->count-1)) {
+                                     putchar(' ');
+                                 }
+                             }
+                             putchar(')');
+                             break;
+                         }
     }
 }
 
-void lval_println(lval v) { lval_print(v); putchar('\n'); }
+void lval_println(lval *v) { lval_print(v); putchar('\n'); }
 
-lval eval(mpc_ast_t *node) {
-    if (strstr(node->tag, "number")) {
-        errno = 0;
-        i64 x = strtol(node->contents, NULL, 10);
-        return errno != ERANGE ? lval_num(x) : lval_err(LERR_BAD_NUM);
+void lval_del(lval *v) {
+    switch (v->type) {
+        case LVAL_NUM: break;
+
+        case LVAL_ERR: free(v->err); break;
+        case LVAL_SYM: free(v->sym); break;
+
+        case LVAL_SEXPR: {
+                             for (i32 i=0; i< v->count; i++) {
+                                 lval_del((lval *)v->cell[i]);
+                             }
+                             free(v->cell);
+                             break;
+                         }
     }
+}
 
-    char* op = node->children[1]->contents;
+lval *lval_read_num(mpc_ast_t *t) {
+    errno = 0;
+    i64 v = strtol(t->contents, NULL, 10);
+    if (errno == ERANGE) {
+        return lval_err("invalid_number");
+    }
+    return lval_num(v);
+}
 
-    lval x = eval(node->children[2]);
+lval* lval_add(lval *v, lval *x) {
+    v->count++;
+    v->cell = realloc(v->cell, v->count * sizeof(lval*));
+    v->cell[v->count - 1] = (struct lval*)x;
+    return v;
+}
 
-    i32 i = 3;
-    while (strstr(node->children[i]->tag, "expr")) {
-        x = eval_op(x, op, eval(node->children[i]));
-        i++;
+lval* lval_read(mpc_ast_t *node) {
+    if (strstr(node->tag, "number")) return lval_read_num(node);
+    if (strstr(node->tag, "symbol")) return lval_sym(node->contents);
+
+    lval *x = NULL;
+    if (strcmp(node->tag, ">") == 0) { x = lval_sexpr(); };
+    if (strstr(node->tag, "sexpr"))  { x = lval_sexpr(); };
+    printf("%s\n", node->contents);
+
+    for (i32 i=0; i < node->children_num; i++) {
+        if (strcmp(node->children[i]->contents, "(") == 0)      continue;
+        if (strcmp(node->children[i]->contents, ")") == 0)      continue;
+        if (strcmp(node->children[i]->tag,      "regex") == 0)  continue;
+        x = lval_add(x, lval_read(node->children[i]));
     }
 
     return x;
@@ -118,16 +171,18 @@ i32 main(i32 argc, char** argv) {
     // }
 
     mpc_parser_t *Number   = mpc_new("number");
-    mpc_parser_t *Operator = mpc_new("operator");
+    mpc_parser_t *Symbol   = mpc_new("symbol");
     mpc_parser_t *Expr     = mpc_new("expr");
+    mpc_parser_t *Sexpr    = mpc_new("sexpr");
     mpc_parser_t *Alisp    = mpc_new("alisp");
 
     mpca_lang(MPCA_LANG_DEFAULT,
             " number   : /-?[0-9]+/ ;                             "
-            " operator : '+' | '-' | '*' | '/' ;                  "
-            " expr     : <number> | '(' <operator> <expr>+ ')' ;  "
-            " alisp    : /^/ <operator> <expr>+ /$/ ;             ",
-            Number, Operator, Expr, Alisp);
+            " symbol : '+' | '-' | '*' | '/' ;                    "
+            " sexpr    : '(' <expr>* ')' ;                        "
+            " expr     : <number> | <symbol> | <sexpr> ;          "
+            " alisp    : /^/ <expr>* /$/ ;                        ",
+            Number, Symbol, Sexpr, Expr, Alisp);
 
     puts("Alisp Version 0.0.1");
 
@@ -137,18 +192,18 @@ i32 main(i32 argc, char** argv) {
 
         mpc_result_t r;
         if (mpc_parse("<stdin>", input, Alisp, &r)) {
-            lval_println(eval(r.output));
+            lval *x = lval_read(r.output);
+            lval_println(x);
+            lval_del(x);
             mpc_ast_delete(r.output);
         } else {
             mpc_err_print(r.error);
             mpc_err_delete(r.error);
         }
-
-        printf("%s\n", input);
         free(input);
     }
 
-    mpc_cleanup(4, Number, Operator, Expr, Alisp);
+    mpc_cleanup(5, Number, Symbol, Sexpr, Expr, Alisp);
 
     return 0;
 }
