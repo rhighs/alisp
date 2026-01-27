@@ -15,7 +15,10 @@
 #define DBG_LOG(FMT, ...) do{}while(0)
 #endif
 
-enum { LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPR };
+#define LASSERT(arg, cond, err) \
+    if (!(cond)) { lval_del(arg); return lval_err(err); }
+
+enum { LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPR, LVAL_QEXPR };
 enum { LERR_DIV_ZERO, LERR_BAD_OP, LERR_BAD_NUM };
 
 typedef struct lval {
@@ -28,6 +31,11 @@ typedef struct lval {
     i32 count;
     struct lval **cell;
 } lval;
+
+lval* lval_eval(lval* v);
+void lval_println(lval *v);
+void lval_print(lval *v);
+lval* lval_add(lval *v, lval *x);
 
 void fatal(const char* message) {
     fprintf(stderr, "fatal: %s\n", message);
@@ -66,6 +74,14 @@ lval* lval_sexpr(void) {
   return v;
 }
 
+lval* lval_qexpr(void) {
+  lval* v = malloc(sizeof(lval));
+  v->type = LVAL_QEXPR;
+  v->count = 0;
+  v->cell = NULL;
+  return v;
+}
+
 void lval_del(lval *v) {
     switch (v->type) {
         case LVAL_NUM: break;
@@ -73,6 +89,7 @@ void lval_del(lval *v) {
         case LVAL_ERR: free(v->err); break;
         case LVAL_SYM: free(v->sym); break;
 
+        case LVAL_QEXPR:
         case LVAL_SEXPR: {
                              for (i32 i=0; i< v->count; i++) {
                                  lval_del((lval *)v->cell[i]);
@@ -132,8 +149,84 @@ lval* builtin_op(lval *first, char* op) {
     return x;
 }
 
-lval* lval_eval(lval* v);
+lval* builtin_head(lval *v) {
+    LASSERT(v, v->count == 1, "'head' too many arguments");
+    LASSERT(v, v->cell[0]->type == LVAL_QEXPR, "'head' incorrect argument type, qexpr expected");
+    LASSERT(v, v->cell[0]->count != 0, "'head' cannot work on empty qexpr {}");
+    lval *result = lval_take(v, 0);
+    while (result->count > 1) { lval_del(lval_pop(result, 1)); }
+    return result;
+}
 
+lval* builtin_tail(lval *v) {
+    LASSERT(v, v->count == 1, "'tail' too many arguments");
+    LASSERT(v, v->cell[0]->type == LVAL_QEXPR, "'tail' incorrect argument type, qexpr expected");
+    LASSERT(v, v->cell[0]->count != 0, "'tail' cannot work on empty qexpr {}");
+    lval *result = lval_take(v, 0);
+    lval_del(lval_pop(result, 0));
+    return result;
+}
+
+lval* builtin_list(lval *v) {
+    v->type = LVAL_QEXPR;
+    return v;
+}
+
+lval* builtin_eval(lval *v) {
+    LASSERT(v, v->count == 1, "'eval' too many arguments");
+    LASSERT(v, v->cell[0]->type == LVAL_QEXPR, "'eval' incorrect argument type, qexpr expected");
+    lval *x = lval_take(v, 0);
+    x->type = LVAL_SEXPR;
+    return lval_eval(x);
+}
+
+lval* lval_join(lval *v1, lval *v2) {
+    while (v2->count) {
+        v1 = lval_add(v1, lval_pop(v2, 0));
+    }
+    lval_del(v2);
+    return v2;
+}
+
+lval* builtin_join(lval *v) {
+    for (i32 i = 0; i < v->count; i++) {
+        LASSERT(v, v->cell[i]->type == LVAL_QEXPR,
+                "'join' incorrect argument type, qexpr expected");
+    }
+
+    lval *x = lval_pop(v, 0);
+    lval_println(x);
+    while (v->count) {
+        lval *popped = lval_pop(v, 0);
+
+        x = lval_join(x, popped);
+    }
+
+    lval_del(v);
+    return x;
+}
+
+lval* builtin_len(lval *v) {
+    LASSERT(v, v->count == 1, "'len' too many arguments");
+    LASSERT(v, v->cell[0]->type == LVAL_QEXPR, "'len' incorrect argument type, qexpr expected");
+    i64 len = v->cell[0]->count;
+    lval_del(v);
+    return lval_num(len);
+}
+
+lval* builtin(lval* v, char *func) {
+    if (strcmp("list", func) == 0) { return builtin_list(v); }
+    if (strcmp("head", func) == 0) { return builtin_head(v); }
+    if (strcmp("len",  func) == 0) { return builtin_len(v); }
+    if (strcmp("tail", func) == 0) { return builtin_tail(v); }
+    if (strcmp("join", func) == 0) { return builtin_join(v); }
+    if (strcmp("eval", func) == 0) { return builtin_eval(v); }
+    if (strstr("+/-*", func)) { return builtin_op(v, func); }
+    lval_del(v);
+    return lval_err("unknown function");
+}
+
+static
 lval* lval_eval_sexpr(lval* v) {
     for (i32 i = 0; i < v->count; i++)
         v->cell[i] = lval_eval(v->cell[i]);
@@ -150,7 +243,7 @@ lval* lval_eval_sexpr(lval* v) {
         return lval_err("S-expression does not start with a symbol");
     }
 
-    lval* result = builtin_op(v, f->sym);
+    lval* result = builtin(v, f->sym);
     lval_del(f);
     return result;
 }
@@ -160,22 +253,24 @@ lval* lval_eval(lval* v) {
     return v;
 }
 
+void lval_expr_print(char open, lval *v, char close) {
+    putchar(open);
+    for (i32 i = 0; i < v->count; i++) {
+        lval_print((lval *)v->cell[i]);
+        if (i != (v->count-1)) {
+            putchar(' ');
+        }
+    }
+    putchar(close);
+}
+
 void lval_print(lval *v) {
     switch (v->type) {
         case LVAL_NUM: printf("%lli", v->num); break;
         case LVAL_ERR: printf("error: %s", v->err); break;
         case LVAL_SYM: printf("%s",  v->sym); break;
-        case LVAL_SEXPR: {
-                             putchar('(');
-                             for (i32 i = 0; i < v->count; i++) {
-                                 lval_print((lval *)v->cell[i]);
-                                 if (i != (v->count-1)) {
-                                     putchar(' ');
-                                 }
-                             }
-                             putchar(')');
-                             break;
-                         }
+        case LVAL_QEXPR:  lval_expr_print('{', v, '}'); break;
+        case LVAL_SEXPR:  lval_expr_print('(', v, ')'); break;
     }
 }
 
@@ -193,7 +288,7 @@ lval *lval_read_num(mpc_ast_t *t) {
 lval* lval_add(lval *v, lval *x) {
     v->count++;
     v->cell = realloc(v->cell, v->count * sizeof(lval*));
-    v->cell[v->count - 1] = (struct lval*)x;
+    v->cell[v->count - 1] = x;
     return v;
 }
 
@@ -204,10 +299,13 @@ lval* lval_read(mpc_ast_t *node) {
     lval *x = NULL;
     if (strcmp(node->tag, ">") == 0) { x = lval_sexpr(); };
     if (strstr(node->tag, "sexpr"))  { x = lval_sexpr(); };
+    if (strstr(node->tag, "qexpr"))  { x = lval_qexpr(); }
 
     for (i32 i=0; i < node->children_num; i++) {
         if (strcmp(node->children[i]->contents, "(") == 0)      continue;
         if (strcmp(node->children[i]->contents, ")") == 0)      continue;
+        if (strcmp(node->children[i]->contents, "{") == 0)      continue;
+        if (strcmp(node->children[i]->contents, "}") == 0)      continue;
         if (strcmp(node->children[i]->tag,      "regex") == 0)  continue;
         x = lval_add(x, lval_read(node->children[i]));
     }
@@ -256,17 +354,20 @@ i32 main(i32 argc, char** argv) {
 
     mpc_parser_t *Number   = mpc_new("number");
     mpc_parser_t *Symbol   = mpc_new("symbol");
+    mpc_parser_t *Qexpr    = mpc_new("qexpr");
     mpc_parser_t *Expr     = mpc_new("expr");
     mpc_parser_t *Sexpr    = mpc_new("sexpr");
     mpc_parser_t *Alisp    = mpc_new("alisp");
 
     mpca_lang(MPCA_LANG_DEFAULT,
-            " number : /-?[0-9]+/ ;                             "
-            " symbol : '+' | '-' | '*' | '/' ;                  "
-            " sexpr  : '(' <expr>* ')' ;                        "
-            " expr   : <number> | <symbol> | <sexpr> ;          "
-            " alisp  : /^/ <expr>* /$/ ;                        ",
-            Number, Symbol, Sexpr, Expr, Alisp);
+            " number : /-?[0-9]+/ ;                                             "
+            " symbol : \"list\" | \"head\" | \"tail\" | \"cons\" | \"init\"     "
+            "        | \"join\" | \"eval\" | \"len\"  | '+' | '-' | '*' | '/' ; "
+            " sexpr  : '(' <expr>* ')' ;                                        "
+            " qexpr  : '{' <expr>* '}' ;                                        "
+            " expr   : <number> | <symbol> | <sexpr> | <qexpr>;                 "
+            " alisp  : /^/ <expr>* /$/ ;                                        ",
+            Number, Symbol, Sexpr, Qexpr, Expr, Alisp);
 
     puts("Alisp Version 0.0.1");
 
@@ -287,7 +388,7 @@ i32 main(i32 argc, char** argv) {
         free(input);
     }
 
-    mpc_cleanup(5, Number, Symbol, Sexpr, Expr, Alisp);
+    mpc_cleanup(6, Number, Symbol, Qexpr, Sexpr, Expr, Alisp);
 
     return 0;
 }

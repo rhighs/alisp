@@ -2,8 +2,8 @@ PROG := alisp
 CC   := gcc
 SRC  := mpc.c main.c
 
-CFLAGS_DEBUG   := -g -O0 -Wall -Wextra -std=c99 -DDEBUG
-CFLAGS_RELEASE := -O3 -DNDEBUG -Wall -Wextra -std=c99
+CFLAGS_DEBUG   := -g -O0 -Wall -Wextra -std=c17 -DDEBUG
+CFLAGS_RELEASE := -O3 -DNDEBUG -Wall -Wextra -std=c17
 
 LDFLAGS := -ledit
 
