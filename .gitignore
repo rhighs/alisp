@@ -1,2 +1,22 @@
+# build artifacts
 alisp
-alisp.exe
+*.o
+*.a
+*.so
+*.out
+*.exe
+a.out
+
+# common build dirs
+build/
+bin/
+dist/
+
+# vim
+*.swp
+*.swo
+*.swn
+*.swm
+*~
+.netrwhist
+.vim/
