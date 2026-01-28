@@ -176,6 +176,30 @@ lval* builtin_join(lval *v) {
 }
 
 static
+lval* builtin_cons(lval *v) {
+    LASSERT(v, v->count == 2, "'cons' needs 2 arguments");
+    lval *v1 = lval_pop(v, 0);
+    LASSERT(v1, v1->type == LVAL_NUM || v1->type == LVAL_SYM, "first argument my be of type number of symbol");
+    lval *v2= lval_pop(v, 0);
+    LASSERT(v2, v2->type == LVAL_QEXPR, "'cons' incorrect second argument type, qexpr expected");
+
+    lval *out = lval_qexpr();
+    lval_add(out, v1);
+    out = lval_join(out, v2);
+    return out;
+}
+
+static
+lval* builtin_init(lval *v) {
+    LASSERT(v, v->count == 1, "'init' too many arguments");
+    LASSERT(v, v->cell[0]->type == LVAL_QEXPR, "'init' incorrect argument type, qexpr expected");
+    lval *x = lval_pop(v, 0);
+    lval *out = lval_pop(x, x->count - 1);
+    lval_del(out);
+    return x;
+}
+
+static
 lval* builtin_len(lval *v) {
     LASSERT(v, v->count == 1, "'len' too many arguments");
     LASSERT(v, v->cell[0]->type == LVAL_QEXPR, "'len' incorrect argument type, qexpr expected");
@@ -188,10 +212,12 @@ static
 lval* builtin(lval* v, char *func) {
     if (strcmp("list", func) == 0) { return builtin_list(v); }
     if (strcmp("head", func) == 0) { return builtin_head(v); }
-    if (strcmp("len",  func) == 0) { return builtin_len(v); }
     if (strcmp("tail", func) == 0) { return builtin_tail(v); }
     if (strcmp("join", func) == 0) { return builtin_join(v); }
     if (strcmp("eval", func) == 0) { return builtin_eval(v); }
+    if (strcmp("init", func) == 0) { return builtin_init(v); }
+    if (strcmp("len",  func) == 0) { return builtin_len(v);  }
+    if (strcmp("cons", func) == 0) { return builtin_cons(v); }
     if (strstr("+/-*", func)) { return builtin_op(v, func); }
     lval_del(v);
     return lval_err("unknown function");
