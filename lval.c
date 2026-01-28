@@ -9,11 +9,6 @@
 #include "mpc.h"
 
 static
-void fatal(const char* message) {
-    fprintf(stderr, "fatal: %s\n", message);
-    exit(1);
-}
-
 lval* lval_num(i64 num) {
     lval *out = malloc(sizeof(lval));
     out->type = LVAL_NUM;
@@ -21,6 +16,7 @@ lval* lval_num(i64 num) {
     return out;
 }
 
+static
 lval* lval_err(char *err) {
     DBG_LOG("an error was created -> lval_err(\"%s\")\n", err);
     lval *out = malloc(sizeof(lval));
@@ -30,6 +26,7 @@ lval* lval_err(char *err) {
     return out;
 }
 
+static
 lval* lval_sym(char *sym) {
     lval *out = malloc(sizeof(lval));
     out->type = LVAL_SYM;
@@ -38,6 +35,7 @@ lval* lval_sym(char *sym) {
     return out;
 }
 
+static
 lval* lval_sexpr(void) {
   lval* v = malloc(sizeof(lval));
   v->type = LVAL_SEXPR;
@@ -46,6 +44,7 @@ lval* lval_sexpr(void) {
   return v;
 }
 
+static
 lval* lval_qexpr(void) {
   lval* v = malloc(sizeof(lval));
   v->type = LVAL_QEXPR;
@@ -62,27 +61,9 @@ lval* lval_add(lval *v, lval *x) {
     return v;
 }
 
-void lval_del(lval *v) {
-    switch (v->type) {
-        case LVAL_NUM: break;
-
-        case LVAL_ERR: free(v->err); break;
-        case LVAL_SYM: free(v->sym); break;
-
-        case LVAL_QEXPR:
-        case LVAL_SEXPR: {
-                             for (i32 i=0; i< v->count; i++) {
-                                 lval_del((lval *)v->cell[i]);
-                             }
-                             free(v->cell);
-                             break;
-                         }
-    }
-}
-
 static
 lval* lval_pop(lval *v, i32 i) {
-    lval *x = (lval *)v->cell[i];
+    lval *x = v->cell[i];
     memmove(&v->cell[i], &v->cell[i + 1],
             sizeof(lval*) * (v->count - i - 1));
     v->count--;
@@ -90,6 +71,7 @@ lval* lval_pop(lval *v, i32 i) {
     return x;
 }
 
+static
 lval* lval_take(lval* v, i32 i) {
     lval* x = lval_pop(v, i);
     lval_del(v);
@@ -169,10 +151,11 @@ lval* builtin_eval(lval *v) {
 static
 lval* lval_join(lval *v1, lval *v2) {
     while (v2->count) {
-        v1 = lval_add(v1, lval_pop(v2, 0));
+        lval *popped = lval_pop(v2, 0);
+        v1 = lval_add(v1, popped);
     }
     lval_del(v2);
-    return v2;
+    return v1;
 }
 
 static
@@ -183,10 +166,8 @@ lval* builtin_join(lval *v) {
     }
 
     lval *x = lval_pop(v, 0);
-    lval_println(x);
     while (v->count) {
         lval *popped = lval_pop(v, 0);
-
         x = lval_join(x, popped);
     }
 
@@ -238,11 +219,6 @@ lval* lval_eval_sexpr(lval* v) {
     return result;
 }
 
-lval* lval_eval(lval* v) {
-    if (v->type == LVAL_SEXPR) { return lval_eval_sexpr(v); }
-    return v;
-}
-
 static
 void lval_expr_print(char open, lval *v, char close) {
     putchar(open);
@@ -254,18 +230,6 @@ void lval_expr_print(char open, lval *v, char close) {
     }
     putchar(close);
 }
-
-void lval_print(lval *v) {
-    switch (v->type) {
-        case LVAL_NUM: printf("%lli", v->num); break;
-        case LVAL_ERR: printf("error: %s", v->err); break;
-        case LVAL_SYM: printf("%s",  v->sym); break;
-        case LVAL_QEXPR:  lval_expr_print('{', v, '}'); break;
-        case LVAL_SEXPR:  lval_expr_print('(', v, ')'); break;
-    }
-}
-
-void lval_println(lval *v) { lval_print(v); putchar('\n'); }
 
 static
 lval *lval_read_num(mpc_ast_t *t) {
@@ -296,4 +260,39 @@ lval* lval_read(mpc_ast_t *node) {
     }
 
     return x;
+}
+
+void lval_del(lval *v) {
+    switch (v->type) {
+        case LVAL_NUM: break;
+
+        case LVAL_ERR: free(v->err); break;
+        case LVAL_SYM: free(v->sym); break;
+
+        case LVAL_QEXPR:
+        case LVAL_SEXPR: {
+                             for (i32 i=0; i< v->count; i++) {
+                                 lval_del((lval *)v->cell[i]);
+                             }
+                             free(v->cell);
+                             break;
+                         }
+    }
+}
+
+void lval_print(lval *v) {
+    switch (v->type) {
+        case LVAL_NUM: printf("%lli", v->num); break;
+        case LVAL_ERR: printf("error: %s", v->err); break;
+        case LVAL_SYM: printf("%s",  v->sym); break;
+        case LVAL_QEXPR:  lval_expr_print('{', v, '}'); break;
+        case LVAL_SEXPR:  lval_expr_print('(', v, ')'); break;
+    }
+}
+
+void lval_println(lval *v) { lval_print(v); putchar('\n'); }
+
+lval* lval_eval(lval* v) {
+    if (v->type == LVAL_SEXPR) { return lval_eval_sexpr(v); }
+    return v;
 }
