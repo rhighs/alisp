@@ -14,7 +14,7 @@
 #define LASSERT_NARGS(func, args, expected)                                    \
     LASSERT(args, args->count == expected,                                     \
             "'%s' passed incorrect number of arguments. Got %i, expected %i.", \
-            func, args->count, num, )
+            func, args->count, expected)
 
 #define LASSERT_TYPE(func, args, index, expect)                     \
     LASSERT(args, args->cell[index]->type == expect,                \

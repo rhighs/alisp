@@ -38,6 +38,37 @@ void lenv_def(lenv *e, lval *k, lval *v) {
 }
 
 static
+lval* lval_copy(lval *v) {
+    lval *copy = LVAL_ALLOC();
+    copy->type = v->type;
+
+    switch (v->type) {
+        case LVAL_NUM:
+            copy->num = v->num; break;
+        case LVAL_FUN:
+            copy->fun = v->fun; break;
+
+        case LVAL_SYM:
+            copy->sym = (char *)malloc(strlen(v->sym) + 1); break;
+        case LVAL_ERR:
+            copy->err = (char *)malloc(strlen(v->err) + 1); break;
+
+        case LVAL_QEXPR:
+        case LVAL_SEXPR: {
+            lval **cc = malloc(sizeof(lval *) * v->count);
+            for (i32 i = 0; i < v->count; i++) {
+                cc[i] = v->cell[i];
+            }
+            copy->cell = cc;
+            copy->count = v->count;
+            break;
+        }
+    }
+
+    return copy;
+}
+
+static
 lval* lval_err(char *fmt, ...) {
     lval *out = malloc(sizeof(lval));
     out->type = LVAL_ERR;
@@ -128,7 +159,7 @@ lval* lval_lambda(lval *formals, lval *body) {
 
 static
 lval *builtin_lambda(lenv *e, lval *v) {
-    LASSERT_NUM("\\", v, 2);
+    LASSERT_NARGS("\\", v, 2);
     LASSERT_TYPE("\\", v, 0, LVAL_QEXPR);
     LASSERT_TYPE("\\", v, 1, LVAL_QEXPR);
 
@@ -322,11 +353,6 @@ static lval *builtin_mul(lenv *e, lval *v) { return builtin_op(e, v, "*"); }
 static lval *builtin_div(lenv *e, lval *v) { return builtin_op(e, v, "/"); }
 
 static
-lval* builtin_put(lenv* e, lval* a) {
-  return builtin_var(e, a, "=");
-}
-
-static
 lval *builtin_var(lenv *e, lval *a, char *func) {
     LASSERT_TYPE(func, a, 0, LVAL_QEXPR);
 
@@ -356,18 +382,40 @@ lval *builtin_var(lenv *e, lval *a, char *func) {
     return lval_sexpr();
 }
 
-lval* lval_call(lenv* e, lval* f, lval* a) {
-  if (f->fun) { return f->fun(e, a); }
+static
+lval* builtin_put(lenv* e, lval* a) {
+  return builtin_var(e, a, "=");
+}
 
-  for (int i = 0; i < a->count; i++)
-      lenv_put(f->env, f->formals->cell[i], a->cell[i]);
+lval* lval_call(lenv* e, lval* f, lval* v) {
+    if (f->fun) { return f->fun(e, v); }
 
-  lval_del(a);
+    i32 given = v->count;
+    i32 total_formal = f->formals->count;
 
-  f->env->parent = e;
+    while (v->count) {
+        if (f->formals->count == 0) {
+            lval_del(v); return lval_err(
+                    "function call received too many arguments. Got %i, Expected %i",
+                    given, total_formal);
+        }
 
-  return builtin_eval(f->env,
-    lval_add(lval_sexpr(), lval_copy(f->body)));
+        lval *sym = lval_pop(f->formals, 0);
+        lval *val = lval_pop(v, 0);
+
+        lenv_put(f->env, sym, val);
+        lval_del(sym); lval_del(val);
+    }
+
+    lval_del(v);
+
+    if (f->formals->count == 0) {
+        f->env->parent = e;
+        return builtin_eval(f->env,
+                lval_add(lval_sexpr(), lval_copy(f->body)));
+    } else {
+        return lval_copy(f);
+    }
 }
 
 lval* lval_eval_sexpr(lenv *e, lval *v) {
@@ -386,7 +434,7 @@ lval* lval_eval_sexpr(lenv *e, lval *v) {
         return lval_err("S-expression does not start with a function");
     }
 
-    lval* result = f->fun(e, v);
+    lval *result = lval_call(e, f, v);
     lval_del(f);
     return result;
 }
@@ -411,37 +459,6 @@ lval *lval_read_num(mpc_ast_t *t) {
         return lval_err("invalid_number");
     }
     return lval_num(v);
-}
-
-static
-lval* lval_copy(lval *v) {
-    lval *copy = LVAL_ALLOC();
-    copy->type = v->type;
-
-    switch (v->type) {
-        case LVAL_NUM:
-            copy->num = v->num; break;
-        case LVAL_FUN:
-            copy->fun = v->fun; break;
-
-        case LVAL_SYM:
-            copy->sym = (char *)malloc(strlen(v->sym) + 1); break;
-        case LVAL_ERR:
-            copy->err = (char *)malloc(strlen(v->err) + 1); break;
-
-        case LVAL_QEXPR:
-        case LVAL_SEXPR: {
-            lval **cc = malloc(sizeof(lval *) * v->count);
-            for (i32 i = 0; i < v->count; i++) {
-                cc[i] = v->cell[i];
-            }
-            copy->cell = cc;
-            copy->count = v->count;
-            break;
-        }
-    }
-
-    return copy;
 }
 
 lenv* lenv_new(void) {
