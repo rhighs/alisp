@@ -57,8 +57,7 @@ i32 main(i32 argc, char** argv) {
 
     mpca_lang(MPCA_LANG_DEFAULT,
             " number : /-?[0-9]+/ ;                                             "
-            " symbol : \"list\" | \"head\" | \"tail\" | \"cons\" | \"init\"     "
-            "        | \"join\" | \"eval\" | \"len\"  | '+' | '-' | '*' | '/' ; "
+            " symbol : /[a-zA-Z0-9_+\\-*\\/\\\\=<>!&]+/ ;                       "
             " sexpr  : '(' <expr>* ')' ;                                        "
             " qexpr  : '{' <expr>* '}' ;                                        "
             " expr   : <number> | <symbol> | <sexpr> | <qexpr>;                 "
@@ -67,13 +66,15 @@ i32 main(i32 argc, char** argv) {
 
     puts("Alisp Version 0.0.1");
 
+    lenv *env = lenv_new();
+    lenv_add_builtins(env);
     while (1) {
         char *input = readline("alisp> ");
         add_history(input);
 
         mpc_result_t r;
         if (mpc_parse("<stdin>", input, Alisp, &r)) {
-            lval *x = lval_eval(lval_read(r.output));
+            lval *x = lval_eval(env, lval_read(r.output));
             lval_println(x);
             lval_del(x);
             mpc_ast_delete(r.output);
