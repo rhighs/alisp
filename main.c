@@ -7,7 +7,7 @@
 
 #include "mpc.h"
 #include "types.h"
-#include "lval.h"
+#include "alisp.h"
 
 static
 i32 __read_file_size(const char *filepath) {

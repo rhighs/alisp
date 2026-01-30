@@ -4,7 +4,7 @@
 #include <string.h>
 #include <errno.h>
 
-#include "lval.h"
+#include "alisp.h"
 #include "util.h"
 #include "mpc.h"
 
