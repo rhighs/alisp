@@ -1,0 +1,15 @@
+{
+  "version": "2.0.0",
+  "configurations": [
+    {
+      "name": "Debug Alisp (LLDB, interactive)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/alisp",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated",
+      "preLaunchTask": "build_debug"
+    }
+  ]
+}
