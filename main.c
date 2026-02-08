@@ -77,6 +77,7 @@ i32 main(i32 argc, char** argv) {
             lval *x = lval_eval(env, lval_read(r.output));
             lval_println(x);
             lval_del(x);
+
             mpc_ast_delete(r.output);
         } else {
             mpc_err_print(r.error);
@@ -86,7 +87,5 @@ i32 main(i32 argc, char** argv) {
     }
 
     mpc_cleanup(6, Number, Symbol, Qexpr, Sexpr, Expr, Alisp);
-
     return 0;
 }
-

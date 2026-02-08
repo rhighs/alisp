@@ -45,19 +45,31 @@ lval* lval_copy(lval *v) {
     switch (v->type) {
         case LVAL_NUM:
             copy->num = v->num; break;
-        case LVAL_FUN:
-            copy->fun = v->fun; break;
+        case LVAL_FUN: {
+            if (!v->fun) {
+                copy->fun = NULL; copy->env = lenv_copy(v->env);
+                copy->formals = lval_copy(v->formals);
+                copy->body = lval_copy(v->body);
+            } else {
+                copy->fun = v->fun; 
+            }
+            break;
+        }
 
         case LVAL_SYM:
-            copy->sym = (char *)malloc(strlen(v->sym) + 1); break;
+            copy->sym = (char *)malloc(strlen(v->sym) + 1);
+            strcpy(copy->sym, v->sym);
+            break;
         case LVAL_ERR:
-            copy->err = (char *)malloc(strlen(v->err) + 1); break;
+            copy->err = (char *)malloc(strlen(v->err) + 1);
+            strcpy(copy->err, v->err);
+            break;
 
         case LVAL_QEXPR:
         case LVAL_SEXPR: {
             lval **cc = malloc(sizeof(lval *) * v->count);
             for (i32 i = 0; i < v->count; i++) {
-                cc[i] = v->cell[i];
+                cc[i] = lval_copy(v->cell[i]);
             }
             copy->cell = cc;
             copy->count = v->count;
@@ -149,7 +161,6 @@ static
 lval* lval_lambda(lval *formals, lval *body) {
   lval* v = malloc(sizeof(lval));
   v->type = LVAL_FUN;
-
   v->fun = NULL;
   v->env = lenv_new();
   v->formals = formals;
@@ -392,6 +403,19 @@ lval* lval_call(lenv* e, lval* f, lval* v) {
 
     i32 given = v->count;
     i32 total_formal = f->formals->count;
+    DBG_LOG("function call -> given %i, expected %i\n", given, total_formal);
+
+    #ifdef DEBUG_FUNC
+    for (i32 i = 0; i < v->count; i++) {
+        DBG_LOG("arg %i -> type: %s, lval = ", i, ltype_name(v->cell[i]->type));
+        lval_print(v->cell[i]); putchar('\n');
+    }
+
+    for (i32 i = 0; i < f->formals->count; i++) {
+        DBG_LOG("formal %i -> type: %s, lval = ", i, ltype_name(f->formals->cell[i]->type));
+        lval_print(f->formals->cell[i]); putchar('\n');
+    }
+    #endif
 
     while (v->count) {
         if (f->formals->count == 0) {
@@ -404,6 +428,7 @@ lval* lval_call(lenv* e, lval* f, lval* v) {
         lval *val = lval_pop(v, 0);
 
         lenv_put(f->env, sym, val);
+
         lval_del(sym); lval_del(val);
     }
 
@@ -418,6 +443,7 @@ lval* lval_call(lenv* e, lval* f, lval* v) {
     }
 }
 
+
 lval* lval_eval_sexpr(lenv *e, lval *v) {
     for (i32 i = 0; i < v->count; i++)
         v->cell[i] = lval_eval(e, v->cell[i]);
@@ -430,7 +456,7 @@ lval* lval_eval_sexpr(lenv *e, lval *v) {
 
     lval *f = lval_pop(v, 0);
     if (f->type != LVAL_FUN) {
-        lval_del(f); lval_del(v);
+        lval_del(v); lval_del(f);
         return lval_err("S-expression does not start with a function");
     }
 
@@ -602,7 +628,15 @@ void lval_del(lval *v) {
 
 void lval_print(lval *v) {
     switch (v->type) {
-        case LVAL_FUN:   printf("<function>");         break;
+        case LVAL_FUN: {
+            if (v->fun) {
+                printf("<builtin>"); }
+            else {
+                printf("(\\ "); lval_print(v->formals);
+                putchar(' '); lval_print(v->body); putchar(')');
+            }
+            break; 
+        }
         case LVAL_NUM:   printf("%lli", v->num);       break;
         case LVAL_ERR:   printf("error: %s", v->err);  break;
         case LVAL_SYM:   printf("%s",  v->sym);        break;
