@@ -9,11 +9,14 @@ LDFLAGS := -ledit
 
 all: debug
 
-debug:
-	$(CC) $(SRC) -o $(PROG) $(CFLAGS_DEBUG) $(LDFLAGS)
+builddir:
+	mkdir -p build/bin
 
-release:
-	$(CC) $(SRC) -o $(PROG) $(CFLAGS_RELEASE) $(LDFLAGS)
+debug: builddir
+	$(CC) $(SRC) -o build/bin/$(PROG)-dev $(CFLAGS_DEBUG) $(LDFLAGS)
+
+release: builddir
+	$(CC) $(SRC) -o build/bin/$(PROG) $(CFLAGS_RELEASE) $(LDFLAGS)
 
 clean:
-	rm -f $(PROG)
+	rm -rf $(PROG) build

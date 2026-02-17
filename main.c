@@ -72,20 +72,28 @@ i32 main(i32 argc, char** argv) {
         char *input = readline("alisp> ");
         add_history(input);
 
-        mpc_result_t r;
-        if (mpc_parse("<stdin>", input, Alisp, &r)) {
-            lval *x = lval_eval(env, lval_read(r.output));
-            lval_println(x);
-            lval_del(x);
-
-            mpc_ast_delete(r.output);
+        if (strcmp(input, ".exit") == 0) {
+            goto REPL_EXIT;
+        } else if (strcmp(input, ".help") == 0) {
+            printf(" .exit - quit REPL\n");
+            printf(" .help - show REPL commands\n");
         } else {
-            mpc_err_print(r.error);
-            mpc_err_delete(r.error);
+            mpc_result_t r;
+            if (mpc_parse("<stdin>", input, Alisp, &r)) {
+                lval *x = lval_eval(env, lval_read(r.output));
+                lval_println(x);
+                lval_del(x);
+
+                mpc_ast_delete(r.output);
+            } else {
+                mpc_err_print(r.error);
+                mpc_err_delete(r.error);
+            }
         }
         free(input);
     }
 
+REPL_EXIT:
     mpc_cleanup(6, Number, Symbol, Qexpr, Sexpr, Expr, Alisp);
     return 0;
 }
