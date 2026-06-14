@@ -1,6 +1,5 @@
 #pragma once
 
-// Should always inline no matter what.
 #ifndef _ALWAYS_INLINE_
 #if defined(__GNUC__)
 #define _ALWAYS_INLINE_ __attribute__((always_inline)) inline
@@ -11,7 +10,6 @@
 #endif
 #endif
 
-// Should always inline, except in dev builds because it makes debugging harder.
 #ifndef _FORCE_INLINE_
 #ifdef DEV_ENABLED
 #define _FORCE_INLINE_ inline
